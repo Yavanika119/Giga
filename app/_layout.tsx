@@ -1,10 +1,11 @@
 import React from 'react';
+import { Stack } from 'expo-router';
 import { AuthProvider } from '../src/hooks/useAuth';
 
 export default function RootLayout() {
   return (
     <AuthProvider>
-      {/* Your app content */}
+      <Stack />
     </AuthProvider>
   );
 }
