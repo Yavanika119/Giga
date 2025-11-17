@@ -1,121 +1,85 @@
-import { createContext, useContext, useReducer, useEffect } from 'react';
-import { AuthState, LoginCredentials, RegisterData } from '../types';
-import { authApi } from '../api/authApi';
-import { tokenService } from '../auth/tokenService';
+import React, { createContext, useContext, useEffect, useReducer } from 'react';
+import * as SecureStore from 'expo-secure-store';
+import axios from 'axios';
+import { API_URL } from '../config/appConfig';
+import * as WebBrowser from 'expo-web-browser';
+import startAsync from 'expo-auth-session';
+import { makeRedirectUri } from 'expo-auth-session';
 
-type AuthAction =
-  | { type: 'LOGIN_SUCCESS'; payload: { user: any; token: string } }
-  | { type: 'LOGOUT' }
-  | { type: 'SET_LOADING'; payload: boolean };
+WebBrowser.maybeCompleteAuthSession();
 
-const initialState: AuthState = {
-  user: null,
-  token: null,
-  isAuthenticated: false,
-};
+const AuthContext = createContext<any>(null);
 
-const AuthContext = createContext<{
-  state: AuthState;
-  login: (credentials: LoginCredentials) => Promise<void>;
-  register: ( RegisterData) => Promise<void>;
-  logout: () => void;
-} | undefined>(undefined);
+const initialState = { user: null, token: null, isAuthenticated: false };
 
-const authReducer = (state: AuthState, action: AuthAction): AuthState => {
+function reducer(state: any, action: any) {
   switch (action.type) {
     case 'LOGIN_SUCCESS':
-      return {
-        ...state,
-        user: action.payload.user,
-        token: action.payload.token,
-        isAuthenticated: true,
-      };
+      return { ...state, ...action.payload, isAuthenticated: true };
     case 'LOGOUT':
       return initialState;
-    case 'SET_LOADING':
-      return state;
     default:
       return state;
   }
-};
+}
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, dispatch] = useReducer(authReducer, initialState);
+export const AuthProvider = ({ children }: any) => {
+  const [state, dispatch] = React.useReducer(reducer, initialState);
 
-  useEffect(() => {
-    // Initialize auth state from storage
-    const initializeAuth = async () => {
-      const token = await tokenService.getToken();
-      if (token) {
-        try {
-          // Verify token and set user
-          const user = await tokenService.getUser();
-          if (user) {
-            dispatch({
-              type: 'LOGIN_SUCCESS',
-              payload: { user, token }
-            });
-          }
-        } catch (error) {
-          // Token verification failed, clear stored data
-          await tokenService.clearToken();
-        }
-      }
-    };
+  const login = async () => {
+  const redirectUri = makeRedirectUri({
+    url: `${API_URL}/auth/callback`,
+    useProxy: true,
+});
 
-    initializeAuth();
-  }, []);
+    // 1️⃣ Ask backend for the Keycloak authorization URL
+    const { data } = await axios.get(`${API_URL}/auth/login`, {
+      params: { redirect_uri: redirectUri },
+    });
 
-  const login = async (credentials: LoginCredentials) => {
-    try {
-      const response = await authApi.login(credentials);
-      const { user, token } = response;
-      
-      await tokenService.setToken(token);
-      await tokenService.setUser(user);
-      
-      dispatch({
-        type: 'LOGIN_SUCCESS',
-        payload: { user, token }
+    // 2️⃣ Start PKCE auth session (browser)
+    const result = await startAsync({ authUrl: data.authUrl });
+
+    if (result.type === 'success' && result.params.code) {
+      // 3️⃣ Exchange code with your backend → tokens
+      const tokenRes = await axios.post(`${API_URL}/auth/callback`, {
+        code: result.params.code,
+        redirect_uri: redirectUri,
       });
-    } catch (error: any) {
-      throw error;
-    }
-  };
 
-  const register = async (data: RegisterData) => {
-    try {
-      const response = await authApi.register(data);
-      return response;
-    } catch (error: any) {
-      throw error;
+      const { token, user } = tokenRes.data;
+
+      await SecureStore.setItemAsync('token', token);
+      dispatch({ type: 'LOGIN_SUCCESS', payload: { token, user } });
     }
   };
 
   const logout = async () => {
-    try {
-      if (state.token) {
-        await authApi.logout(state.token);
-      }
-    } catch (error) {
-      console.error('Logout API error:', error);
-    } finally {
-      await tokenService.clearToken();
-      dispatch({ type: 'LOGOUT' });
-    }
+    await SecureStore.deleteItemAsync('token');
+    dispatch({ type: 'LOGOUT' });
   };
 
+  useEffect(() => {
+    (async () => {
+      const token = await SecureStore.getItemAsync('token');
+      if (token) {
+        try {
+          const { data } = await axios.get(`${API_URL}/auth/profile`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          dispatch({ type: 'LOGIN_SUCCESS', payload: { token, user: data } });
+        } catch {
+          await SecureStore.deleteItemAsync('token');
+        }
+      }
+    })();
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ state, login, register, logout }}>
+    <AuthContext.Provider value={{ ...state, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+export const useAuth = () => useContext(AuthContext);

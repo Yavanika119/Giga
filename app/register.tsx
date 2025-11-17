@@ -1,52 +1,61 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  Alert,
-  Platform,
-} from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, SafeAreaView, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useAuth } from '../src/hooks/useAuth';
+import axios from 'axios';
+import { useUIEngine } from '../src/context/UIEngineContext';
+import getLoginStyles from '../src/styles/styles'; // same shared styles
 
-const Register = () => {
-  const [username, setUsername] = useState<string>('');
-  const [email, setEmail] = useState<string>('');
-  const [password, setPassword] = useState<string>('');
-  const [confirmPassword, setConfirmPassword] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const { register } = useAuth();
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000'; // update to your backend URL
+
+export default function Register() {
+  const { ui, loading } = useUIEngine();
   const router = useRouter();
 
+  const [form, setForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    firstName: '',
+    lastName: '',
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  const styles = getLoginStyles({
+    backgroundColor: ui?.colors?.background,
+    cardBackground: ui?.colors?.card,
+    primaryColor: ui?.colors?.primary,
+    titleColor: ui?.colors?.text,
+    subtitleColor: ui?.colors?.textSecondary,
+    buttonTextColor: ui?.colors?.buttonText,
+    fontFamily: ui?.fonts?.primary,
+  });
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator color={ui?.colors?.primary || '#5AAFFF'} size="large" />
+      </SafeAreaView>
+    );
+  }
+
   const handleRegister = async () => {
-    if (!username || !email || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
+    if (!form.username || !form.password || !form.email) {
+      Alert.alert('Missing Fields', 'Please fill all required fields.');
       return;
     }
 
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    setLoading(true);
+    setSubmitting(true);
     try {
-      await register({ username, email, password });
-      Alert.alert('Success', 'Registration successful! Please login.', [
-        { text: 'OK', onPress: () => router.push('/login') }
-      ]);
-    } catch (error: any) {
-      Alert.alert('Registration Failed', error.message);
+      const res = await axios.post(`${API_URL}/auth/sync-user`, form);
+      if (res.status === 201) {
+        Alert.alert('Success', 'Registration successful. Please log in.');
+        router.replace('/login');
+      }
+    } catch (err: any) {
+      console.error(err.response?.data || err.message);
+      Alert.alert('Registration Failed', err.response?.data?.error || 'Something went wrong.');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -54,138 +63,65 @@ const Register = () => {
     <SafeAreaView style={styles.container}>
       <View style={styles.formContainer}>
         <Text style={styles.title}>Create Account</Text>
-        <Text style={styles.subtitle}>Join us today</Text>
+        <Text style={styles.subtitle}>Fill the details below to register</Text>
 
         <TextInput
-          style={styles.input}
-          placeholder="Username"
+          placeholder="First Name"
           placeholderTextColor="#888"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoComplete="username"
-          editable={!loading}
+          style={styles.input}
+          value={form.firstName}
+          onChangeText={(t) => setForm({ ...form, firstName: t })}
         />
 
         <TextInput
+          placeholder="Last Name"
+          placeholderTextColor="#888"
           style={styles.input}
+          value={form.lastName}
+          onChangeText={(t) => setForm({ ...form, lastName: t })}
+        />
+
+        <TextInput
           placeholder="Email"
           placeholderTextColor="#888"
-          value={email}
-          onChangeText={setEmail}
+          style={styles.input}
           keyboardType="email-address"
-          autoCapitalize="none"
-          autoComplete="email"
-          editable={!loading}
+          value={form.email}
+          onChangeText={(t) => setForm({ ...form, email: t })}
         />
 
         <TextInput
+          placeholder="Username"
+          placeholderTextColor="#888"
           style={styles.input}
+          value={form.username}
+          onChangeText={(t) => setForm({ ...form, username: t })}
+        />
+
+        <TextInput
           placeholder="Password"
           placeholderTextColor="#888"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoComplete="password"
-          editable={!loading}
-        />
-
-        <TextInput
           style={styles.input}
-          placeholder="Confirm Password"
-          placeholderTextColor="#888"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
           secureTextEntry
-          editable={!loading}
+          value={form.password}
+          onChangeText={(t) => setForm({ ...form, password: t })}
         />
 
-        <TouchableOpacity 
-          style={[styles.registerButton, loading && styles.disabledButton]} 
+        <TouchableOpacity
+          disabled={submitting}
           onPress={handleRegister}
-          disabled={loading}
+          style={[styles.loginButton, submitting && styles.disabledButton]}
         >
           <Text style={styles.buttonText}>
-            {loading ? 'Registering...' : 'Register'}
+            {submitting ? 'Registering...' : 'Register'}
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.linkButton}
-          onPress={() => router.push('/login')}
-          disabled={loading}
-        >
+        {/* Back to Login */}
+        <TouchableOpacity onPress={() => router.replace('/login')} style={styles.linkButton}>
           <Text style={styles.linkText}>Already have an account? Login</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
-};
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0A0F20',
-    justifyContent: 'center',
-    padding: 20,
-    ...Platform.select({
-      android: {
-        paddingTop: 25,
-      }
-    })
-  },
-  formContainer: {
-    backgroundColor: 'rgba(30, 35, 55, 0.7)',
-    borderRadius: 12,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#AAA',
-    marginBottom: 24,
-  },
-  input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    color: '#FFF',
-    fontSize: 16,
-  },
-  registerButton: {
-    backgroundColor: '#5AAFFF',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  linkButton: {
-    alignItems: 'center',
-  },
-  linkText: {
-    color: '#5AAFFF',
-    fontSize: 14,
-  },
-});
-
-export default Register;
+}
